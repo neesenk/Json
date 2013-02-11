@@ -25,9 +25,9 @@ typedef struct _Json_obj_t {
 } Json_obj_t;
 
 typedef struct _Json_numraw_t {
-	uint8_t int_len;
-	uint8_t frace_len;
-	uint8_t exp_len;
+	uint8_t nlen;
+	uint8_t flen;
+	uint8_t elen;
 	const char *number;
 } Json_num_t;
 
@@ -54,7 +54,7 @@ enum { JT_NONE, JT_NULL, JT_TRUE, JT_FALSE, JT_NUM_RAW, JT_INT, JT_REAL, JT_STRI
 #define OBJECT_FIELDS_SORT_NUM	16
 typedef struct _Json_t { Json_val_t root; } Json_t;
 
-Json_decode_ctx *Json_decode_create(void);
+Json_decode_ctx *Json_decode_create(int is_raw);
 void Json_decode_destroy(Json_decode_ctx *ctx);
 
 void Json_destroy(Json_t *json);
