@@ -1,5 +1,6 @@
 #ifndef __JSON_H__
 #define __JSON_H__
+#include <stdint.h>
 
 // private
 typedef struct _Json_val_t Json_val_t;
