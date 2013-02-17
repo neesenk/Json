@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include "Json.h"
 
 static int parse_any(Json_decode_ctx *ctx, Json_val_t *val);
@@ -187,7 +188,7 @@ static inline void _Json_num_convert(const char *num, int nlen, const char *frac
 		uint64_t rl = Json_atoi(num, nlen);
 		if (flen == 0 && elen == 0 && (rl <= 9223372036854775807ULL + flag)) {
 			val->v.integer = flag ? -rl : rl;
-			val->var_type = JT_INT;
+			val->val_type = JT_INT;
 			return;
 		}
 		ret = rl;
@@ -209,7 +210,7 @@ static inline void _Json_num_convert(const char *num, int nlen, const char *frac
 	}
 
 	val->v.real = flag ? -ret : ret;
-	val->var_type = JT_REAL;
+	val->val_type = JT_REAL;
 }
 
 static inline void Json_num_convert(Json_val_t *val)
@@ -251,12 +252,12 @@ static int parse_number(Json_decode_ctx *ctx, Json_val_t *val)
 		elen = pos - tmp - !!(*tmp != '+' && *tmp != '-');
 	}
 
-	nlen = num - ctx->pos, num  = ctx->pos;
+	nlen = num - ctx->pos;
 	if (ctx->is_raw) {
-		val->var_type = JT_NUM_RAW;
+		val->val_type = JT_NUM_RAW;
 		val->v.numraw = (Json_num_t){nlen, flen, elen, ctx->pos};
 	} else {
-		_Json_num_convert(num, nlen, frace, flen, exp, elen, val);
+		_Json_num_convert(ctx->pos, nlen, frace, flen, exp, elen, val);
 	}
 
 	ctx->pos = pos;
@@ -311,7 +312,7 @@ static inline int utf8_encode(unsigned char *ou, unsigned code)
 static inline int parse_string_raw(Json_decode_ctx *ctx, Json_val_t *val)
 {
 	const char *pos = ctx->pos + 1;
-	int is_esc = 0, c;
+	int esc = 0, c;
 	ctx->last_type = JT_STRING;
 
 	for (;;) {
@@ -319,14 +320,15 @@ static inline int parse_string_raw(Json_decode_ctx *ctx, Json_val_t *val)
 			pos++;
 		if (c != '\\' || pos[1] == '\0')
 			break;
-		pos += 2, is_esc = 1;
+		pos += 2, esc = JF_IS_ESCAPES;
 	}
 
 	if (*pos != '"')
 		return false;
 
-	val->var_type = JT_STRING;
-	val->v.string = (Json_str_t) { 0, is_esc, pos - ctx->pos - 1, ctx->pos + 1};
+	val->val_type = JT_STRING;
+	val->val_flag = esc;
+	val->v.string = (Json_str_t) { pos - ctx->pos - 1, ctx->pos + 1};
 	ctx->pos = pos + 1;
 
 	return true;
@@ -338,8 +340,8 @@ static inline const char *_parse_string(unsigned char *pos, Json_val_t *val)
 
 	while (*rp != '"' && *rp != '\\' && *rp != '\0')
 		rp++;
-	wp = rp;
 
+	wp = rp;
 	for (;;) {
 		if (*rp == '"' || *rp == '\0' || *(rp + 1) == '\0')
 			break;
@@ -384,8 +386,9 @@ static inline const char *_parse_string(unsigned char *pos, Json_val_t *val)
 	if (*rp != '"')
 		return NULL;
 
-	val->var_type = JT_STRING;
-	val->v.string = (Json_str_t) {0, 0, wp - pos, (const char *)pos};
+	val->val_type = JT_STRING;
+	val->val_flag = 0;
+	val->v.string = (Json_str_t) {wp - pos, (const char *)pos};
 
 	return (const char *)rp + 1;
 }
@@ -408,7 +411,7 @@ static inline int Json_unescape(Json_val_t *val)
 
 static int parse_true(Json_decode_ctx *ctx, Json_val_t *val)
 {
-	val->var_type = ctx->last_type = JT_TRUE;
+	val->val_type = ctx->last_type = JT_TRUE;
 	if (ctx->pos[1] != 'r' || ctx->pos[2] != 'u' || ctx->pos[3] != 'e')
 		return false;
 	ctx->pos += 4;
@@ -417,7 +420,7 @@ static int parse_true(Json_decode_ctx *ctx, Json_val_t *val)
 
 static int parse_false(Json_decode_ctx *ctx, Json_val_t *val)
 {
-	val->var_type = ctx->last_type = JT_FALSE;
+	val->val_type = ctx->last_type = JT_FALSE;
 	if (ctx->pos[1] != 'a' || ctx->pos[2] != 'l' || ctx->pos[3] != 's' || ctx->pos[4] != 'e')
 		return false;
 	ctx->pos += 5;
@@ -426,7 +429,7 @@ static int parse_false(Json_decode_ctx *ctx, Json_val_t *val)
 
 static int parse_null(Json_decode_ctx * ctx, Json_val_t *val)
 {
-	val->var_type = ctx->last_type = JT_NULL;
+	val->val_type = ctx->last_type = JT_NULL;
 	if (ctx->pos[1] != 'u' || ctx->pos[2] != 'l' || ctx->pos[3] != 'l')
 		return false;
 	ctx->pos += 4;
@@ -512,7 +515,7 @@ static int parse_array(Json_decode_ctx *ctx, Json_val_t *val)
 	for (i = 0; i < da->len; i++)
 		arr[i] = da->arr[i];
 
-	val->var_type = JT_ARRAY;
+	val->val_type = JT_ARRAY;
 	val->v.array.len = da->len, val->v.array.arr = arr;
 	ret = true;
 DONE:
@@ -566,8 +569,9 @@ static int parse_object(Json_decode_ctx *ctx, Json_val_t *val)
 		objs[j].value = da->arr[i + 1];
 	}
 
-	val->var_type = JT_OBJECT;
-	val->v.object = (Json_obj_t) {0, da->len/2, objs};
+	val->val_type = JT_OBJECT;
+	val->val_flag = 0;
+	val->v.object = (Json_obj_t) {da->len/2, objs};
 	ret = true;
 DONE:
 	if (!ret)
@@ -614,9 +618,9 @@ Json_t *Json_parse(Json_decode_ctx *ctx, char *json)
 static void _Json_destroy(Json_val_t *root)
 {
 	size_t i = 0;
-	switch (root->var_type) {
+	switch (root->val_type) {
 	case JT_STRING:
-		if (root->v.string.is_alloc)
+		if (root->val_flag & JF_IS_ALLOC)
 			free((void *)root->v.string.str);
 		break;
 	case JT_ARRAY:
@@ -643,9 +647,9 @@ void Json_destroy(Json_t *json)
 
 inline Json_val_t *Json_val_convert(Json_val_t *val)
 {
-	if (val->var_type == JT_NUM_RAW)
+	if (val->val_type == JT_NUM_RAW)
 		Json_num_convert(val);
-	if (val->var_type == JT_STRING && val->v.string.is_escapes)
+	if (val->val_type == JT_STRING && val->val_flag & JF_IS_ESCAPES)
 		Json_unescape(val);
 	return val;
 }
@@ -669,17 +673,17 @@ Json_val_t *Json_object_value(Json_val_t *object, const char *field)
 	Json_obj_t *obj	    = &object->v.object;
 	Json_pair_t *fields = obj->objects, cmp;
 
-	if (object->var_type != JT_OBJECT)
+	if (object->val_type != JT_OBJECT)
 		return NULL;
 
-	if (!obj->is_sort && obj->len >= OBJECT_FIELDS_SORT_NUM) {
+	if (!(object->val_flag & JF_IS_SORT) && obj->len >= OBJECT_FIELDS_SORT_NUM) {
 		qsort(fields, obj->len, sizeof(*fields), Json_object_cmp);
-		obj->is_sort = 1;
+		object->val_flag |= JF_IS_SORT;
 	}
 
-	cmp.name.v.string = (Json_str_t ){0, 0, strlen(field), field};
+	cmp.name.v.string = (Json_str_t ){strlen(field), field};
 
-	if (obj->is_sort) {
+	if (object->val_flag & JF_IS_SORT) {
 		fields = bsearch(&cmp, fields, obj->len, sizeof(*fields), Json_object_cmp);
 		return fields ? &fields->value : NULL;
 	}
@@ -692,22 +696,36 @@ Json_val_t *Json_object_value(Json_val_t *object, const char *field)
 	return NULL;
 }
 
-Json_val_t *Json_query(Json_val_t *root, const char *path[])
-{
-	while (*path) {
-		if (!root)
-			return NULL;
-		root = Json_object_value(root, *path++);
-	}
-
-	return Json_val_convert(root);
-}
-
 Json_val_t *Json_array_index(Json_val_t *root, size_t pos)
 {
-	if (root->var_type != JT_ARRAY || pos >= root->v.array.len)
+	if (root->val_type != JT_ARRAY || pos >= root->v.array.len)
 		return NULL;
 	return Json_val_convert(root->v.array.arr + pos);
+}
+
+Json_val_t *Json_query(Json_val_t *root, const char *fmt, ...)
+{
+	va_list vp;
+
+	va_start(vp, fmt);
+	for (; *fmt; fmt++) {
+		if (!root)
+			return NULL;
+
+		switch (*fmt) {
+		case 'o':
+			root = Json_object_value(root, va_arg(vp, const char *));
+			break;
+		case 'a':
+			root = Json_array_index(root, va_arg(vp, int));
+			break;
+		default:
+			return NULL;
+		}
+	}
+	va_end(vp);
+
+	return Json_val_convert(root);
 }
 
 Json_decode_ctx *Json_decode_create(int is_raw)

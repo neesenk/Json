@@ -8,9 +8,7 @@ typedef struct _Json_pair_t Json_pair_t;
 typedef struct _Json_decode_ctx Json_decode_ctx;
 
 typedef struct _Json_str_t {
-	uint32_t is_alloc:1;
-	uint32_t is_escapes:1;
-	uint32_t len:30;
+	uint32_t len;
 	const char *str;
 } Json_str_t;
 
@@ -20,8 +18,7 @@ typedef struct _Json_arr_t {
 } Json_arr_t;
 
 typedef struct _Json_obj_t {
-	uint32_t is_sort:1;
-	uint32_t len:31;
+	uint32_t len;
 	Json_pair_t *objects;
 } Json_obj_t;
 
@@ -33,7 +30,8 @@ typedef struct _Json_numraw_t {
 } Json_num_t;
 
 struct _Json_val_t {
-	uint8_t		   var_type;
+	uint8_t		   val_type;
+	uint16_t	   val_flag;
 	union {
 		double	   real;
 		int64_t    integer;
@@ -49,6 +47,7 @@ struct _Json_pair_t {
 	Json_val_t	value;
 };
 
+enum { JF_NONE = 0, JF_IS_ALLOC = 0x1U, JF_IS_ESCAPES = 0x2U, JF_IS_SORT = 0x4U };
 enum { JT_NONE, JT_NULL, JT_TRUE, JT_FALSE, JT_NUM_RAW, JT_INT, JT_REAL, JT_STRING, JT_OBJECT, JT_ARRAY };
 
 // public
@@ -62,8 +61,8 @@ void Json_destroy(Json_t *json);
 
 Json_t *Json_parse(Json_decode_ctx *ctx, char *json);
 
-Json_val_t *Json_query(Json_val_t *root, const char *path[]);
 Json_val_t *Json_array_index(Json_val_t *root, size_t pos);
 Json_val_t *Json_object_value(Json_val_t *object, const char *field);
+Json_val_t *Json_query(Json_val_t *root, const char *fmt, ...);
 
 #endif // __JSON_H__
