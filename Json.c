@@ -10,10 +10,9 @@ static int parse_any(Json_decode_ctx *ctx, Json_val_t *val);
 static void _Json_destroy(Json_val_t *root);
 
 typedef struct _darray {
-	struct _darray *next;
 	size_t		max;
 	size_t		len;
-	Json_val_t	arr[0];
+	Json_val_t	*arr;
 } darray_t;
 
 struct _Json_decode_ctx {
@@ -21,47 +20,22 @@ struct _Json_decode_ctx {
 	uint8_t		last_type;
 	const char	*raw;
 	const char	*pos;
-	darray_t	*darray_list;
+	darray_t	darr[1];
 };
 
-static darray_t *darray_create(size_t size)
+static int darray_append(darray_t *da, Json_val_t *val)
 {
-	darray_t *n = calloc(1, sizeof(darray_t) + sizeof(Json_val_t) * size);
-	if (n)
-		n->max = size, n->len = 0, n->next = NULL;
-	return n;
-}
-
-static int darray_append(darray_t **pda, Json_val_t *val)
-{
-	darray_t *da = *pda;
 	if (da->max == da->len) {
-		da = realloc(da, sizeof(darray_t) + sizeof(Json_val_t) * da->max * 2);
-		if (da == NULL)
+		size_t n = da->max * 2 < 64 ? 64 : da->max * 2;
+		Json_val_t *narr = realloc(da->arr, sizeof(Json_val_t) * n);
+		if (narr == NULL)
 			return false;
-		*pda = da, da->max *= 2;
+		assert(n > da->len);
+		da->arr = narr, da->max = n;
 	}
 
 	da->arr[da->len++] = *val;
 	return true;
-}
-
-static darray_t *darray_pop(Json_decode_ctx *ctx)
-{
-	if (ctx->darray_list) {
-		darray_t *ret  = ctx->darray_list;
-		ctx->darray_list = ret->next;
-		return ret;
-	}
-
-	return darray_create(64);
-}
-
-static void darray_push(Json_decode_ctx *ctx, darray_t *da)
-{
-	da->len = 0;
-	da->next = ctx->darray_list;
-	ctx->darray_list = da;
 }
 
 #ifdef __SSE4_2__ // 支持sse4.2指令
@@ -266,8 +240,7 @@ static int parse_number(Json_decode_ctx *ctx, Json_val_t *val)
 
 static inline unsigned hex2unicode(unsigned char *in)
 {
-	unsigned code = 0;
-	int i = 0;
+	unsigned code = 0, i;
 	for (i = 0; i < 4; i++) {
 		code <<= 4;
 		if (in[i] >= '0' && in[i] <= '9')
@@ -486,10 +459,7 @@ static int parse_array(Json_decode_ctx *ctx, Json_val_t *val)
 {
 	int ret = false, i;
 	Json_val_t obj, *arr;
-	darray_t *da = darray_pop(ctx);
-
-	if (da == NULL)
-		return false;
+	size_t off = ctx->darr->len;
 
 	ctx->last_type = JT_ARRAY;
 	ctx->pos++; // skip [
@@ -497,7 +467,7 @@ static int parse_array(Json_decode_ctx *ctx, Json_val_t *val)
 		skip_content(ctx);
 		if (*ctx->pos == ']')
 			break;
-		if (!parse_any(ctx, &obj) || !darray_append(&da, &obj))
+		if (!parse_any(ctx, &obj) || !darray_append(ctx->darr, &obj))
 			goto DONE;
 
 		skip_content(ctx);
@@ -509,19 +479,19 @@ static int parse_array(Json_decode_ctx *ctx, Json_val_t *val)
 	}
 	ctx->pos++; // skip ]
 
-	if (!(arr = calloc(da->len, sizeof(*arr))))
+	if (!(arr = calloc(ctx->darr->len - off, sizeof(*arr))))
 		goto DONE;
 
-	for (i = 0; i < da->len; i++)
-		arr[i] = da->arr[i];
+	for (i = off; i < ctx->darr->len; i++)
+		arr[i - off] = ctx->darr->arr[i];
 
 	val->val_type = JT_ARRAY;
-	val->v.array.len = da->len, val->v.array.arr = arr;
+	val->v.array.len = ctx->darr->len - off, val->v.array.arr = arr;
+	ctx->darr->len = off;
 	ret = true;
 DONE:
 	if (!ret)
-		darray_clean(da);
-	darray_push(ctx, da);
+		darray_clean(ctx->darr);
 	return ret;
 }
 
@@ -530,9 +500,7 @@ static int parse_object(Json_decode_ctx *ctx, Json_val_t *val)
 	Json_pair_t *objs = NULL;
 	Json_val_t tmp;
 	int ret = false, i = 0, j = 0;
-	darray_t *da = darray_pop(ctx);
-	if (da == NULL)
-		return false;
+	size_t off = ctx->darr->len, n;
 
 	ctx->last_type = JT_OBJECT;
 	ctx->pos++; // skip {
@@ -540,7 +508,7 @@ static int parse_object(Json_decode_ctx *ctx, Json_val_t *val)
 		skip_content(ctx);
 		if (*ctx->pos == '}')
 			break;
-		if (*ctx->pos != '"' || !parse_string(ctx, &tmp) || !darray_append(&da, &tmp))
+		if (*ctx->pos != '"' || !parse_string(ctx, &tmp) || !darray_append(ctx->darr, &tmp))
 			goto DONE;
 
 		skip_content(ctx);
@@ -549,7 +517,7 @@ static int parse_object(Json_decode_ctx *ctx, Json_val_t *val)
 		ctx->pos++;
 
 		skip_content(ctx);
-		if (!parse_any(ctx, &tmp) || !darray_append(&da, &tmp))
+		if (!parse_any(ctx, &tmp) || !darray_append(ctx->darr, &tmp))
 			goto DONE;
 
 		skip_content(ctx);
@@ -561,22 +529,23 @@ static int parse_object(Json_decode_ctx *ctx, Json_val_t *val)
 	}
 	ctx->pos++; // skip }
 
-	if (!(objs = calloc(da->len / 2, sizeof(*objs))))
+	n = (ctx->darr->len - off) / 2;
+	if (!(objs = calloc(n, sizeof(*objs))))
 		goto DONE;
 
-	for (i = 0, j = 0; i < da->len; i += 2, j++) {
-		objs[j].name  = da->arr[i + 0];
-		objs[j].value = da->arr[i + 1];
+	for (i = off, j = 0; i < ctx->darr->len; i += 2, j++) {
+		objs[j].name  = ctx->darr->arr[i + 0];
+		objs[j].value = ctx->darr->arr[i + 1];
 	}
 
 	val->val_type = JT_OBJECT;
 	val->val_flag = 0;
-	val->v.object = (Json_obj_t) {da->len/2, objs};
+	val->v.object = (Json_obj_t) {n, objs};
+	ctx->darr->len = off;
 	ret = true;
 DONE:
 	if (!ret)
-		darray_clean(da);
-	darray_push(ctx, da);
+		darray_clean(ctx->darr);
 	return ret;
 }
 
@@ -711,7 +680,6 @@ Json_val_t *Json_query(Json_val_t *root, const char *fmt, ...)
 	for (; *fmt; fmt++) {
 		if (!root)
 			return NULL;
-
 		switch (*fmt) {
 		case 'o':
 			root = Json_object_value(root, va_arg(vp, const char *));
@@ -722,10 +690,11 @@ Json_val_t *Json_query(Json_val_t *root, const char *fmt, ...)
 		default:
 			return NULL;
 		}
+
 	}
 	va_end(vp);
 
-	return Json_val_convert(root);
+	return root ? Json_val_convert(root) : NULL;
 }
 
 Json_decode_ctx *Json_decode_create(int is_raw)
@@ -739,11 +708,7 @@ Json_decode_ctx *Json_decode_create(int is_raw)
 void Json_decode_destroy(Json_decode_ctx *ctx)
 {
 	if (ctx) {
-		darray_t *da, *next;
-		for (da = ctx->darray_list; da != NULL; da = next) {
-			next = da->next;
-			free(da);
-		}
+		free(ctx->darr->arr);
 		free(ctx);
 	}
 }

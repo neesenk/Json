@@ -109,7 +109,9 @@ int main(int argc, char *argv[])
 		bu[oldsize] = 0;
 		json = Json_parse(ctx, bu);
 		assert(json);
+		Json_print(&json->root);
 		Json_destroy(json);
+		break;
 	}
 	gettimeofday(tv + 1, NULL);
 	// Json_print(&json->root);
