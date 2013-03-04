@@ -1,9 +1,9 @@
 #include <stdlib.h>
-#include <assert.h>
 #include <string.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <assert.h>
 #include "Json.h"
 
 static int parse_any(Json_decode_ctx *ctx, Json_val_t *val);
@@ -30,7 +30,6 @@ static int darray_append(darray_t *da, Json_val_t *val)
 		Json_val_t *narr = realloc(da->arr, sizeof(Json_val_t) * n);
 		if (narr == NULL)
 			return false;
-		assert(n > da->len);
 		da->arr = narr, da->max = n;
 	}
 
@@ -697,7 +696,7 @@ Json_val_t *Json_query(Json_val_t *root, const char *fmt, ...)
 	return root ? Json_val_convert(root) : NULL;
 }
 
-Json_decode_ctx *Json_decode_create(int is_raw)
+Json_decode_ctx *Json_decode_ctx_create(int is_raw)
 {
 	Json_decode_ctx *ctx = calloc(1, sizeof(Json_decode_ctx));
 	if (ctx)
@@ -705,7 +704,7 @@ Json_decode_ctx *Json_decode_create(int is_raw)
 	return ctx;
 }
 
-void Json_decode_destroy(Json_decode_ctx *ctx)
+void Json_decode_ctx_destroy(Json_decode_ctx *ctx)
 {
 	if (ctx) {
 		free(ctx->darr->arr);

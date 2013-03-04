@@ -76,7 +76,7 @@ int main(int argc, char *argv[])
 	int fd, oldsize;
 	char *old = NULL;
 	Json_t *json;
-	Json_decode_ctx *ctx = Json_decode_create(1);
+	Json_decode_ctx *ctx = Json_decode_ctx_create(1);
 	struct timeval tv[2];
 
 	if((fd = open(argv[1],O_RDONLY,0)) < 0 ||
@@ -118,7 +118,7 @@ int main(int argc, char *argv[])
 	printf("time = %ld\n", (long)(tv[1].tv_sec * 1000000 + tv[1].tv_usec - tv[0].tv_sec * 1000000 - tv[0].tv_usec));
 
 	free(old);
-	Json_decode_destroy(ctx);
+	Json_decode_ctx_destroy(ctx);
 
 	return 0;
 }
