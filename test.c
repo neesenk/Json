@@ -31,6 +31,12 @@ static void _Json_print(Json_val_t *root, int level)
 	case JT_STRING:
 		printf("\"%.*s\"", root->v.string.len, root->v.string.str);
 		break;
+	case JT_INT:
+		printf("%lld", (long long)root->v.integer);
+		break;
+	case JT_REAL:
+		printf("%lg", root->v.real);
+		break;
 	case JT_NUM_RAW:
 		i = root->v.numraw.nlen + root->v.numraw.elen + !!root->v.numraw.elen
 			+ root->v.numraw.flen + !!root->v.numraw.flen;
@@ -65,6 +71,46 @@ static void _Json_print(Json_val_t *root, int level)
 	}
 }
 
+static void _encode(Json_val_t *root, const char *name, size_t len, Json_encode_ctx *enc)
+{
+	size_t i = 0;
+	switch (root->val_type) {
+	case JT_NULL:
+		assert(Json_encode_append_null(enc, name, len)); break;
+	case JT_TRUE:
+		assert(Json_encode_append_bool(enc, 1, name, len)); break;
+	case JT_FALSE:
+		assert(Json_encode_append_bool(enc, 0, name, len)); break;
+	case JT_STRING:
+		assert(Json_encode_append_string(enc, root->v.string.str,
+					  root->v.string.len, name, len)); break;
+	case JT_INT:
+		assert(Json_encode_append_integer(enc, root->v.integer, name, len)); break;
+	case JT_REAL:
+		assert(Json_encode_append_real(enc, root->v.real, name, len)); break;
+	case JT_ARRAY:
+		assert(Json_encode_begin_array(enc, name, len));
+		for (i = 0; i < root->v.array.len; i++) {
+			_encode(root->v.array.arr + i, NULL, 0, enc);
+		}
+		assert(Json_encode_end_array(enc));
+		break;
+	case JT_OBJECT:
+		assert(Json_encode_begin_object(enc, name, len));
+		for (i = 0; i < root->v.object.len; i++) {
+			Json_pair_t *pair = root->v.object.objects + i;
+			_encode(&pair->value, pair->name.v.string.str,pair->name.v.string.len,enc);
+		}
+		assert(Json_encode_end_object(enc));
+		break;
+	}
+}
+
+void encode(Json_t *root, Json_encode_ctx *enc)
+{
+	_encode(&root->root, NULL, 0, enc);
+}
+
 void Json_print(Json_val_t *root)
 {
 	_Json_print(root, 0);
@@ -73,10 +119,13 @@ void Json_print(Json_val_t *root)
 
 int main(int argc, char *argv[])
 {
+	const char *buffer = NULL;
+	size_t len;
 	int fd, oldsize;
 	char *old = NULL;
 	Json_t *json;
-	Json_decode_ctx *ctx = Json_decode_ctx_create(1);
+	Json_decode_ctx *ctx = Json_decode_ctx_create(0);
+	Json_encode_ctx *enc = Json_encode_ctx_create(256, 10240, 0);
 	struct timeval tv[2];
 
 	if((fd = open(argv[1],O_RDONLY,0)) < 0 ||
@@ -101,14 +150,27 @@ int main(int argc, char *argv[])
 	printf("time = %ld\n", (long)(tv[1].tv_sec * 1000000 + tv[1].tv_usec - tv[0].tv_sec * 1000000 - tv[0].tv_usec));
 	#endif
 
-	gettimeofday(tv, NULL);
-
-	for (fd = 0; fd < 100000; fd++) {
+	{
 		char bu[oldsize + 1];
+		int i = 0;
+		int n = 1000;
 		memcpy(bu, old, oldsize);
 		bu[oldsize] = 0;
 		json = Json_parse(ctx, bu);
 		assert(json);
+		gettimeofday(tv, NULL);
+		for (i = 0; i < n; i++) {
+			encode(json, enc);
+			buffer = Json_encode_get_buffer(enc, &len);
+			Json_encode_ctx_clear(enc);
+		}
+		gettimeofday(tv + 1, NULL);
+		printf("time = %ld\n", (long)(tv[1].tv_sec * 1000000 + tv[1].tv_usec - tv[0].tv_sec * 1000000 - tv[0].tv_usec));
+		printf("buffer = %ld\n", (long)(n * len));
+	}
+
+	#if 0
+	gettimeofday(tv, NULL);
 		Json_print(&json->root);
 		Json_destroy(json);
 		break;
@@ -116,9 +178,10 @@ int main(int argc, char *argv[])
 	gettimeofday(tv + 1, NULL);
 	// Json_print(&json->root);
 	printf("time = %ld\n", (long)(tv[1].tv_sec * 1000000 + tv[1].tv_usec - tv[0].tv_sec * 1000000 - tv[0].tv_usec));
+	#endif
 
 	free(old);
 	Json_decode_ctx_destroy(ctx);
-
+// #endif
 	return 0;
 }
