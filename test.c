@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
 	char *old = NULL;
 	Json_t *json;
 	Json_decode_ctx *ctx = Json_decode_ctx_create(0);
-	Json_encode_ctx *enc = Json_encode_ctx_create(256, 10240, 0);
+	Json_encode_ctx *enc = Json_encode_ctx_create(256, 10240, JSON_ENCODE_OPT_RAW_FIELDNAME);
 	struct timeval tv[2];
 
 	if((fd = open(argv[1],O_RDONLY,0)) < 0 ||

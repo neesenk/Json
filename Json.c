@@ -775,7 +775,7 @@ void Json_encode_ctx_clear(Json_encode_ctx *enc)
 
 #define NUMMAXLEN (100)
 #define JSON_VAL(n) ((union Json_val)(int64_t)n)
-#define STRMAXLEN(len) (3 * len + 14)
+#define STRMAXLEN(len) (6 * len)
 #define JSONVAL_MAX_LEN(t,v) ((t)==JT_STRING?STRMAXLEN((v).string.len):NUMMAXLEN+1)
 
 static inline int Json_encode_buffer_reserve(Json_encode_ctx *enc, size_t len)
@@ -919,10 +919,10 @@ static inline int Json_encode_buffer_append_value(Json_encode_ctx *enc, int type
 {
 	switch (type) {
 	case JT_RAW:	return Json_encode_buffer_append(enc, val.string.str, val.string.len);
-	case JT_STRING: return Json_encode_buffer_append_string(enc, val.string.str, val.string.len);
 	case JT_NULL:	return Json_encode_buffer_append(enc, "null", 4);
 	case JT_FALSE:  return Json_encode_buffer_append(enc, "false", 5);
 	case JT_TRUE:	return Json_encode_buffer_append(enc, "true", 4);
+	case JT_STRING: return Json_encode_buffer_append_string(enc, val.string.str, val.string.len);
 	case JT_INT:	return Json_encode_buffer_append_integer(enc, val.integer);
 	case JT_REAL:	return Json_encode_buffer_append_real(enc, val.real);
 	}
@@ -993,7 +993,9 @@ int Json_encode_append(Json_encode_ctx *enc, const char *name, size_t nlen,
 
 	if (name) {
 		if (enc->option & JSON_ENCODE_OPT_RAW_FIELDNAME) {
+			enc->fmt_buffer[enc->buffer_len++] = '"';
 			Json_encode_buffer_append(enc, name, nlen);
+			enc->fmt_buffer[enc->buffer_len++] = '"';
 		} else {
 			if (!Json_encode_buffer_append_string(enc, name, nlen))
 				goto ERROR;
