@@ -161,7 +161,7 @@ int main(int argc, char *argv[])
 		gettimeofday(tv, NULL);
 		for (i = 0; i < n; i++) {
 			encode(json, enc);
-			buffer = Json_encode_get_buffer(enc, &len);
+			assert(Json_encode_get_result(enc, &buffer, &len));
 			Json_encode_ctx_clear(enc);
 		}
 		gettimeofday(tv + 1, NULL);

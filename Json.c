@@ -312,7 +312,7 @@ static inline int parse_string_raw(Json_decode_ctx *ctx, Json_val_t *val)
 			pos++;
 		if (c != '\\' || pos[1] == '\0')
 			break;
-		pos += 2, esc = JF_IS_ESCAPES;
+		pos += 2, esc = JF_ESCAPES;
 	}
 
 	if (*pos != '"')
@@ -614,7 +614,7 @@ static void _Json_destroy(Json_val_t *root)
 	size_t i = 0;
 	switch (root->val_type) {
 	case JT_STRING:
-		if (root->val_flag & JF_IS_ALLOC)
+		if (root->val_flag & JF_ALLOC)
 			free((void *)root->v.string.str);
 		break;
 	case JT_ARRAY:
@@ -643,7 +643,7 @@ inline Json_val_t *Json_val_convert(Json_val_t *val)
 {
 	if (val->val_type == JT_NUM_RAW)
 		Json_num_convert(val);
-	if (val->val_type == JT_STRING && val->val_flag & JF_IS_ESCAPES)
+	if (val->val_type == JT_STRING && val->val_flag & JF_ESCAPES)
 		Json_unescape(val);
 	return val;
 }
@@ -670,14 +670,14 @@ Json_val_t *Json_object_value(Json_val_t *object, const char *field)
 	if (object->val_type != JT_OBJECT)
 		return NULL;
 
-	if (!(object->val_flag & JF_IS_SORT) && obj->len >= OBJECT_FIELDS_SORT_NUM) {
+	if (!(object->val_flag & JF_SORT) && obj->len >= OBJECT_FIELDS_SORT_NUM) {
 		qsort(fields, obj->len, sizeof(*fields), Json_object_cmp);
-		object->val_flag |= JF_IS_SORT;
+		object->val_flag |= JF_SORT;
 	}
 
 	cmp.name.v.string = (Json_str_t ){strlen(field), field};
 
-	if (object->val_flag & JF_IS_SORT) {
+	if (object->val_flag & JF_SORT) {
 		fields = bsearch(&cmp, fields, obj->len, sizeof(*fields), Json_object_cmp);
 		return fields ? &fields->value : NULL;
 	}
@@ -773,6 +773,11 @@ void Json_encode_ctx_clear(Json_encode_ctx *enc)
 	}
 }
 
+#define NUMMAXLEN (100)
+#define JSON_VAL(n) ((union Json_val)(int64_t)n)
+#define STRMAXLEN(len) (3 * len + 14)
+#define JSONVAL_MAX_LEN(t,v) ((t)==JT_STRING?STRMAXLEN((v).string.len):NUMMAXLEN+1)
+
 static inline int Json_encode_buffer_reserve(Json_encode_ctx *enc, size_t len)
 {
 	if (enc->buffer_size < enc->buffer_len + len) {
@@ -791,33 +796,29 @@ static inline int Json_encode_buffer_reserve(Json_encode_ctx *enc, size_t len)
 
 static inline int Json_encode_buffer_append(Json_encode_ctx *enc, const char *str, int len)
 {
+	assert(enc->buffer_len + len <= enc->buffer_size);
 	memcpy(enc->fmt_buffer + enc->buffer_len, str, len);
 	enc->buffer_len += len;
-	assert(enc->buffer_len <= enc->buffer_size);
 	return true;
 }
 
 static inline void Json_encode_buffer_append_char(Json_encode_ctx *enc, char c)
 {
+	assert(enc->buffer_len < enc->buffer_size);
 	enc->fmt_buffer[enc->buffer_len++] = c;
-	assert(enc->buffer_len <= enc->buffer_size);
 }
 
 static inline int Json_encode_buffer_append_integer(Json_encode_ctx *enc, int64_t l)
 {
-	int n = snprintf(enc->fmt_buffer + enc->buffer_len, 21, "%lld", (long long)l);
-	assert(n > 0);
-	enc->buffer_len += n;
-
+	assert(enc->buffer_len + NUMMAXLEN <= enc->buffer_size);
+	enc->buffer_len += snprintf(enc->fmt_buffer + enc->buffer_len, NUMMAXLEN, "%lld", (long long)l);
 	return true;
 }
 
 static inline int Json_encode_buffer_append_real(Json_encode_ctx *enc, double r)
 {
-	int n = snprintf(enc->fmt_buffer + enc->buffer_len, 100, "%g", r);
-	assert(n > 0);
-	enc->buffer_len += n;
-
+	assert(enc->buffer_len + NUMMAXLEN <= enc->buffer_size);
+	enc->buffer_len += snprintf(enc->fmt_buffer + enc->buffer_len, NUMMAXLEN, "%g", r);
 	return true;
 }
 
@@ -826,38 +827,40 @@ static int Json_encode_buffer_append_string(Json_encode_ctx *enc, const char *st
 	const unsigned char *io = (const unsigned char *)str;
 	const unsigned char *end = io + len;
 	char *out = enc->fmt_buffer + enc->buffer_len;
-	unsigned in, ucs;
 
 	static const char hex[] = "0123456789ABCDEF";
 	static const char map[256] = {
-		0,1,1,1,1,1,1,1,'b','t','n',1,'f','r',1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-		0,0,'"',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,'\\',0,0,0,0,0,0,0,0,0,0,0,
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-		0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
-		2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,4,4,4,4,4,4,4,4,5,5,5,5,
-		6,6,1,1
+		0,1,1,1,1,1,1,1,'b','t','n',1,'f','r',1,1,1,1,1,1,1,1,1,1,1,1,
+		1,1,1,1,1,1,0,0,'"',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		0,0,0,0,0, '\\',0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+		0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+		2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+		4,4,4,4,4,4,4,4,5,5,5,5,6,6,1,1
 	};
-	#define TOHEX(_v) do {							\
-		unsigned v = (_v);						\
-		*out++ = '\\';						\
-		*out++ = 'u';						\
+	#define TOHEX(_v) do {						\
+		unsigned v = (_v);					\
+		*out++ = '\\',  *out++ = 'u';				\
 		*out++ = hex[(v & 0xf000) >> 12];			\
 		*out++ = hex[(v & 0x0f00) >> 8];			\
 		*out++ = hex[(v & 0x00f0) >> 4];			\
 		*out++ = hex[v & 0x000f];				\
 	} while (0)
 
+	assert(enc->buffer_len + STRMAXLEN(len) <= enc->buffer_size);
 	*out++ = '"';
 	while (io < end) {
+		unsigned in, ucs;
 		int len = map[*io];
 		switch (len) {
 		case 0:
 			*out++ = *io++;
-			continue;
+			break;
 		case 1:
 			ucs = *io++;
+			TOHEX(ucs);
 			break;
 		case 2:
 			if (io + 2 > end)
@@ -868,40 +871,41 @@ static int Json_encode_buffer_append_string(Json_encode_ctx *enc, const char *st
 			if (ucs < 0x80)
 				return false;
 			io += 2;
+			TOHEX(ucs);
 			break;
 		case 3:
 			if (io + 3 > end)
 				return false;
 
-			in = (unsigned)io[0] | ((unsigned)io[1] << 8) | ((unsigned)io[2] << 16);
-			ucs = ((in & 0x0f) << 12) | ((in & 0x3f00) >> 2) | ((in & 0x3f0000) >> 16);
+			in = (unsigned)io[0] | ((unsigned)io[1] << 8)
+				| ((unsigned)io[2] << 16);
+			ucs = ((in & 0x0f) << 12) | ((in & 0x3f00) >> 2)
+				| ((in & 0x3f0000) >> 16);
 			if (ucs < 0x800)
 				return false;
 			io += 3;
+			TOHEX(ucs);
 			break;
 		case 4:
 			if (io + 4 > end)
 				return false;
-			in = (unsigned)io[0] | ((unsigned)io[1] << 8) | ((unsigned)io[2] << 16) | ((unsigned)io[3] << 24);
-			ucs = ((in & 0x07) << 18) | ((in & 0x3f00) << 4) | ((in & 0x3f0000) >> 10) | ((in & 0x3f000000) >> 24);
+			in = (unsigned)io[0] | ((unsigned)io[1] << 8)
+			     | ((unsigned)io[2] << 16) | ((unsigned)io[3] << 24);
+			ucs = ((in & 0x07) << 18) | ((in & 0x3f00) << 4)
+			     | ((in & 0x3f0000) >> 10) | ((in & 0x3f000000) >> 24);
 			if (ucs < 0x10000)
 				return false;
 			io += 4;
+			ucs -= 0x10000;
+			TOHEX((ucs >> 10) + 0xd800);
+			TOHEX((ucs & 0x3ff) + 0xdc00);
 			break;
 		case 5: case 6:
 			return false;
 		default:
 			*out++ = '\\', *out++ = len;
 			io++;
-			continue;
-		}
-
-		if (ucs >= 0x10000) {
-			ucs -= 0x10000;
-			TOHEX((ucs >> 10) + 0xd800);
-			TOHEX((ucs & 0x3ff) + 0xdc00);
-		} else {
-			TOHEX(ucs);
+			break;
 		}
 	}
 
@@ -926,9 +930,6 @@ static inline int Json_encode_buffer_append_value(Json_encode_ctx *enc, int type
 	return false;
 }
 
-#define JSON_VAL(n) ((union Json_val)(int64_t)n)
-#define MAX_STR_ENCODE_LEN(len) (3 * len + 14)
-#define JSONVAL_MAX_LEN(type, val) ((type) == JT_STRING ? MAX_STR_ENCODE_LEN((val).string.len) : 101)
 int Json_encode_append_string(Json_encode_ctx *enc, const char *str, size_t len,
 			      const char *name, size_t nlen)
 {
@@ -953,8 +954,7 @@ int Json_encode_append_null(Json_encode_ctx *enc, const char *name, size_t nlen)
 	return Json_encode_append(enc, name, nlen, JT_NULL, JSON_VAL(0));
 }
 
-int Json_encode_append_bool(Json_encode_ctx *enc, int b,
-			    const char *name, size_t nlen)
+int Json_encode_append_bool(Json_encode_ctx *enc, int b, const char *name, size_t nlen)
 {
 	if (b)
 		return Json_encode_append(enc, name, nlen, JT_TRUE, JSON_VAL(1));
@@ -984,7 +984,7 @@ int Json_encode_append(Json_encode_ctx *enc, const char *name, size_t nlen,
 			return false;
 	}
 
-	maxlen = JSONVAL_MAX_LEN(type, val) + MAX_STR_ENCODE_LEN(nlen) + 2;
+	maxlen = JSONVAL_MAX_LEN(type, val) + STRMAXLEN(nlen) + 2;
 	if (!Json_encode_buffer_reserve(enc, maxlen))
 		return false;
 
@@ -1014,10 +1014,8 @@ static inline int Json_encode_begin_complex(Json_encode_ctx *enc, int type,
 					    const char *name, size_t len)
 {
 	Json_str_t v = {1, type == JT_ARRAY ? "[" : "{"};
-	if (enc->curr_depth >= enc->max_depth) {
-		printf("depth = %d\n", enc->curr_depth);
+	if (enc->curr_depth >= enc->max_depth)
 		return false;
-	}
 	if (!Json_encode_append(enc, name, len, JT_RAW, (union Json_val)v))
 		return false;
 	enc->curr_depth++;
@@ -1058,8 +1056,15 @@ int Json_encode_end_object(Json_encode_ctx *enc)
 	return Json_encode_end_complex(enc, JT_OBJECT);
 }
 
-const char *Json_encode_get_buffer(Json_encode_ctx *enc, size_t *len)
+int Json_encode_get_result(Json_encode_ctx *enc, const char **result, size_t *len)
 {
-	*len = enc->buffer_len;
-	return enc->fmt_buffer;
+	struct fmt_stack *s = enc->fmt_stack + enc->curr_depth;
+	if (enc->curr_depth > 0)
+		return false;
+	if (enc->curr_depth == 0 && (s->type == JT_ARRAY || s->type == JT_OBJECT))
+		return false;
+
+	*result = (const char *)enc->fmt_buffer;
+	*len	= enc->buffer_len;
+	return true;
 }
