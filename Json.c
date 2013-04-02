@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <assert.h>
+#include <ctype.h>
 #include "Json.h"
 
 static int parse_any(Json_decode_ctx *ctx, Json_val_t *val);
@@ -51,34 +52,6 @@ static int darray_append(darray_t *da, Json_val_t *val)
 	return true;
 }
 
-#ifdef __SSE4_2__ // 支持sse4.2指令
-#include <nmmintrin.h>
-static inline const char *_skip_charset(const char *p, const char *chs)
-{
-	__m128i w = _mm_loadu_si128((const __m128i *)chs);
-	for (;;) {
-		__m128i s = _mm_loadu_si128((const __m128i *)p);
-		unsigned r = _mm_cvtsi128_si32(_mm_cmpistrm(w, s,
-				_SIDD_UBYTE_OPS|_SIDD_CMP_EQUAL_ANY|_SIDD_BIT_MASK|_SIDD_NEGATIVE_POLARITY));
-		if (r != 0) // some of characters may be non-whitespace
-			return p + __builtin_ffs(r) - 1;
-		p += 16;
-	}
-}
-
-static inline const char *_skip_blank(const char *p)
-{
-	static const char whitespace[16] = " \n\r\t";
-	return _skip_charset(p, whitespace);
-}
-
-static inline const char *_skip_digits(const char* p)
-{
-	static const char digits[16] = "0123456789";
-	return _skip_charset(p, digits);
-}
-#else
-#include <ctype.h>
 static inline const char *_skip_blank(const char *pos)
 {
 	while (isspace(*pos))
@@ -92,7 +65,6 @@ static inline const char *_skip_digits(const char *pos)
 		pos++;
 	return pos;
 }
-#endif
 
 static const uint64_t power10int[] = {
 	1,10,100,1000,10000,100000,1000000,10000000,100000000,1000000000,
