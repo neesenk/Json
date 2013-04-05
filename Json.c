@@ -52,13 +52,6 @@ static int darray_append(darray_t *da, Json_val_t *val)
 	return true;
 }
 
-static inline const char *_skip_blank(const char *pos)
-{
-	while (isspace(*pos))
-		pos++;
-	return pos;
-}
-
 static inline const char *_skip_digits(const char *pos)
 {
 	while (isdigit(*pos))
@@ -229,50 +222,6 @@ static int parse_number(Json_decode_ctx *ctx, Json_val_t *val)
 	return true;
 }
 
-static inline unsigned hex2unicode(unsigned char *in)
-{
-	unsigned code = 0, i;
-	for (i = 0; i < 4; i++) {
-		code <<= 4;
-		if (in[i] >= '0' && in[i] <= '9')
-			code += in[i] - '0';
-		else if (in[i] >= 'A' && in[i] <= 'F')
-			code += in[i] - 'A' + 10;
-		else if (in[i] >= 'a' && in[i] <= 'f')
-			code += in[i] - 'a' + 10;
-		else
-			return 0xffffffff;
-	}
-	return code;
-}
-
-static inline int utf8_encode(unsigned char *ou, unsigned code)
-{
-	if (code <= 0x7F) {
-		*ou = code & 0xFF;
-		return 1;
-	} else if (code <= 0x7FF) {
-		ou[0] = 0xC0 | ((code >> 6) & 0xFF);
-		ou[1] = 0x80 | ((code & 0x3F));
-		return 2;
-	} else if (code <= 0xFFFF) {
-		ou[0] = 0xE0 | ((code >> 12) & 0xFF);
-		ou[1] = 0x80 | ((code >> 6) & 0x3F);
-		ou[2] = 0x80 | (code & 0x3F);
-		return 3;
-	} else {
-		if (code <= 0x10FFFF)
-			return 0;
-		ou[0] = 0xF0 | ((code >> 18) & 0xFF);
-		ou[1] = 0x80 | ((code >> 12) & 0x3F);
-		ou[2] = 0x80 | ((code >> 6) & 0x3F);
-		ou[3] = 0x80 | (code & 0x3F);
-		return 4;
-	}
-
-	return 0;
-}
-
 static inline int parse_string_raw(Json_decode_ctx *ctx, Json_val_t *val)
 {
 	const char *pos = ctx->pos + 1;
@@ -298,6 +247,45 @@ static inline int parse_string_raw(Json_decode_ctx *ctx, Json_val_t *val)
 	return true;
 }
 
+static inline unsigned hex2uint(unsigned char *in)
+{
+	unsigned v = 0;
+	static const char hex[256] = {
+		-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+		-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,-1,-1,-1,-1,-1,-1,
+		-1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+		-1,10,11,12,13,14,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+		-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+		-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+		-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+		-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+	};
+	if (__builtin_expect(hex[in[0]] < 0, 0))
+		return 0xffffffff;
+	v += hex[in[0]] << 12;
+	if (__builtin_expect(hex[in[1]] < 0, 0))
+		return 0xffffffff;
+	v += hex[in[1]] << 8;
+	if (__builtin_expect(hex[in[2]] < 0, 0))
+		return 0xffffffff;
+	v += hex[in[2]] << 4;
+	if (__builtin_expect(hex[in[3]] < 0, 0))
+		return 0xffffffff;
+	return v + hex[in[3]];
+}
+
+static inline unsigned char unescape(unsigned char c)
+{
+	switch (c) {
+	case 'b': return '\b';
+	case 'f': return '\f';
+	case 'n': return '\n';
+	case 'r': return '\r';
+	case 't': return '\t';
+	}
+	return c;;
+}
+
 static inline const char *_parse_string(unsigned char *pos, Json_val_t *val)
 {
 	unsigned char *wp, *rp = pos;
@@ -311,38 +299,37 @@ static inline const char *_parse_string(unsigned char *pos, Json_val_t *val)
 			break;
 
 		if (rp[1] != 'u') {
-			switch (rp[1]) { // 转义处理
-			case 'b': *wp++ = '\b'; break;
-			case 'f': *wp++ = '\f'; break;
-			case 'n': *wp++ = '\n'; break;
-			case 'r': *wp++ = '\r'; break;
-			case 't': *wp++ = '\t'; break;
-			default:  *wp++ = rp[1]; break;
-			}
-			rp += 2;
+			*wp++ = unescape(rp[1]), rp += 2;
 		} else {
-			unsigned code = 0;
-			if ((code = hex2unicode(rp + 2)) == 0xffffffff)
-				return NULL;
-			if (code >= 0xD800 && code <= 0xDBFF) { // Handle UTF-16 surrogate pair
-				unsigned code2;
-				if (rp[6] != '\\' || rp[7] != 'u')
+			unsigned code = hex2uint(rp + 2);
+			if (code >= 0xD800 && code <= 0xDBFF) {
+				unsigned u = hex2uint(rp + 8);
+				if (rp[6] != '\\' || rp[7] != 'u' || u < 0xDC00 || u > 0xDFFF)
 					return NULL;
-				if ((code2 = hex2unicode(rp + 8)) == 0xffffffff)
-					return NULL;
-				if (code2 < 0xDC00 || code2 > 0xDFFF)
-					return NULL;
-				code = (((code - 0xD800) << 10) | (code2 - 0xDC00)) + 0x10000;
-				if ((code = utf8_encode(wp, code)) == 0)
-					return NULL;
-				rp += 12, wp += code;
-			} else {
-				if ((code = utf8_encode(wp, code)) == 0)
-					return NULL;
-				rp += 6, wp += code;
-			}
-		}
 
+				code = (((code - 0xD800) << 10) | (u - 0xDC00)) + 0x10000;
+
+				*wp++ = 0xF0 | ((code >> 18) & 0xFF);
+				*wp++ = 0x80 | ((code >> 12) & 0x3F);
+				*wp++ = 0x80 | ((code >> 6) & 0x3F);
+				*wp++ = 0x80 | (code & 0x3F);
+
+				rp += 6;
+			} else if (code <= 0x7F) {
+				*wp++ = code;
+			} else if (code <= 0x7FF) {
+				*wp++ = 0xC0 | ((code >> 6) & 0xFF);
+				*wp++ = 0x80 | ((code & 0x3F));
+			} else if (code <= 0xFFFF) {
+				*wp++ = 0xE0 | ((code >> 12) & 0xFF);
+				*wp++ = 0x80 | ((code >> 6) & 0x3F);
+				*wp++ = 0x80 | (code & 0x3F);
+			} else {
+				return NULL;
+			}
+
+			rp += 6;
+		}
 		while (*rp != '"' && *rp != '\\' && *rp != '\0')
 			*wp++ = *rp++;
 	}
@@ -401,11 +388,6 @@ static int parse_null(Json_decode_ctx *ctx, Json_val_t *val)
 	return true;
 }
 
-static inline void skip_blank(Json_decode_ctx *ctx)
-{
-	ctx->pos = _skip_blank(ctx->pos);
-}
-
 static inline int skip_comment(Json_decode_ctx *ctx)
 {
 	const char *pos = ctx->pos + 1;
@@ -433,7 +415,8 @@ static inline int skip_comment(Json_decode_ctx *ctx)
 static inline int skip_content(Json_decode_ctx *ctx)
 {
 	for (;;) {
-		skip_blank(ctx);
+		while (isspace(*ctx->pos))
+			ctx->pos++;
 		if (*ctx->pos != '/')
 			break;
 		if (!skip_comment(ctx))

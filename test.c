@@ -111,9 +111,9 @@ void encode(Json_t *root, Json_encode_ctx *enc)
 	_encode(&root->root, NULL, 0, enc);
 }
 
-void Json_print(Json_val_t *root)
+void Json_print(Json_t *root)
 {
-	_Json_print(root, 0);
+	_Json_print(&root->root, 0);
 	printf("\n");
 }
 
@@ -158,6 +158,7 @@ int main(int argc, char *argv[])
 		bu[oldsize] = 0;
 		json = Json_parse(ctx, bu);
 		assert(json);
+
 		gettimeofday(tv, NULL);
 		for (i = 0; i < n; i++) {
 			encode(json, enc);
