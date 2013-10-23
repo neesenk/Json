@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2013, Zhiyong Liu <NeeseNK at gmail dot com>
+ * All rights reserved.
+ */
+
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>

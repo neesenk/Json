@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <assert.h>
+#include <time.h>
 #include "Json.h"
 
 static void print_prefix(int level)
@@ -153,21 +154,31 @@ int main(int argc, char *argv[])
 	{
 		char bu[oldsize + 1];
 		int i = 0;
-		int n = 1000;
+		int n = 1000000;
+        unsigned to = 0;
+        time_t beg = 0;
 		memcpy(bu, old, oldsize);
 		bu[oldsize] = 0;
+		gettimeofday(tv, NULL);
 		json = Json_parse(ctx, bu);
+		gettimeofday(tv + 1, NULL);
+        to = (uint64_t)tv[1].tv_sec * 1000000 + tv[1].tv_usec - (uint64_t)tv[0].tv_sec * 1000000 - tv[0].tv_usec;
+        printf("parse = %u\n", to);
 		assert(json);
 
+
 		gettimeofday(tv, NULL);
+        beg = time(NULL);
 		for (i = 0; i < n; i++) {
 			encode(json, enc);
 			assert(Json_encode_get_result(enc, &buffer, &len));
 			Json_encode_ctx_clear(enc);
+            if (time(NULL) - beg > 1)
+                break;
 		}
 		gettimeofday(tv + 1, NULL);
-		printf("time = %ld\n", (long)(tv[1].tv_sec * 1000000 + tv[1].tv_usec - tv[0].tv_sec * 1000000 - tv[0].tv_usec));
-		printf("buffer = %ld\n", (long)(n * len));
+        to = (uint64_t)tv[1].tv_sec * 1000000 + tv[1].tv_usec - (uint64_t)tv[0].tv_sec * 1000000 - tv[0].tv_usec;
+        printf("time = %u, n = %d, %lfM/s\n", to, i, ((double)i * len)/to*1000000/1024/1024);
 	}
 
 	#if 0

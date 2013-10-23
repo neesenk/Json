@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2013, Zhiyong Liu <NeeseNK at gmail dot com>
+ * All rights reserved.
+ */
+
 #ifndef __JSON_H__
 #define __JSON_H__
 #include <stdint.h>
